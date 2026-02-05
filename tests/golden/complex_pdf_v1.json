@@ -1,0 +1,108 @@
+{
+  "analysis": {
+    "character_count": 188,
+    "keywords": [
+      [
+        "consistency",
+        0.5746957711326908
+      ],
+      [
+        "consistency consistency",
+        0.19156525704423027
+      ],
+      [
+        "consistency end",
+        0.19156525704423027
+      ],
+      [
+        "consistency repeat",
+        0.19156525704423027
+      ],
+      [
+        "content",
+        0.19156525704423027
+      ],
+      [
+        "content search",
+        0.19156525704423027
+      ],
+      [
+        "end",
+        0.19156525704423027
+      ],
+      [
+        "end page",
+        0.19156525704423027
+      ],
+      [
+        "golden",
+        0.19156525704423027
+      ],
+      [
+        "golden test",
+        0.19156525704423027
+      ]
+    ],
+    "language": "en",
+    "matching_keywords": [
+      [
+        "consistency",
+        0.5746957711326908
+      ],
+      [
+        "consistency consistency",
+        0.19156525704423027
+      ],
+      [
+        "consistency end",
+        0.19156525704423027
+      ],
+      [
+        "consistency repeat",
+        0.19156525704423027
+      ]
+    ],
+    "readability_score": 40.84,
+    "search_term_count": 0,
+    "sentence_count": 8,
+    "text_preview": "Golden test content. Search term: consistency. Repeat consistency consistency. End of page 1.\nGolden test content. Search term: consistency. Repeat consistency consistency. End of page 1.\n",
+    "top_words": {
+      "consistency": 6,
+      "content": 2,
+      "end": 2,
+      "golden": 2,
+      "page": 2,
+      "repeat": 2,
+      "search": 2,
+      "term": 2,
+      "test": 2
+    },
+    "word_count": 35
+  },
+  "metadata": {
+    "author": "",
+    "creation_date": "MOCKED_DATE",
+    "creator": "",
+    "encrypted": false,
+    "extraction_status": "success",
+    "file_size": 1259,
+    "keywords": "",
+    "modification_date": "MOCKED_DATE",
+    "page_count": 2,
+    "permissions": {
+      "annotate": true,
+      "copy": true,
+      "modify": true,
+      "print": true
+    },
+    "producer": "",
+    "subject": "",
+    "title": ""
+  },
+  "statistics": {
+    "memory_used": 0.0,
+    "processed_pages": 2,
+    "total_pages": 2,
+    "total_words": 35
+  }
+}

@@ -1,78 +1,130 @@
 # PDF Text Analyzer
 
-PDF Text Analyzer is a Python class that downloads a PDF from a URL, converts it to text, and performs text analysis. The analysis includes detecting the language of the text, removing stopwords, counting word frequencies, searching for specific phrases, and extracting metadata.
+A robust, modular, and high-performance Python system for downloading, extracting, analyzing, and searching text from PDF documents.
 
-## Requirements
+## Key Features
 
-To use this class, you need Python 3.x and the following libraries:
-
-- `requests`
-- `PyMuPDF` (fitz)
-- `nltk`
-- `langdetect`
-  
-You can install the required libraries using the following command:
-
-```sh
-pip install requests PyMuPDF nltk langdetect
-```
-
-## Usage
-
-1. Import the `PdfProcessor` class from the script.
-2. Create an instance of `PdfProcessor` with a PDF URL.
-3. Call the `main` method with an optional search phrase.
-
-Example:
-
-```python
-from pdf_processor import PdfProcessor
-
-pdf_processor = PdfProcessor("https://example.com/document.pdf")
-results = pdf_processor.main("example phrase")
-print(results)
-```
-
-## Features
-
-- **PDF Download**: Downloads PDFs with retry mechanism.
-- **Text Extraction**: Extracts text using multiprocessing for efficiency.
-- **Language Detection**: Detects the document language.
-- **Stop Words Removal**: Removes stop words (with caching for optimization).
-- **Word Frequency Counting**: Counts word frequencies.
-- **Phrase Search**: Searches for specific phrases.
-- **Metadata Extraction**: Extracts PDF metadata.
-- **Multilingual Support**: Supports multiple languages (based on NLTK's stopwords corpus).
-
-## Error Handling
-
-The script includes comprehensive error handling for:
-
-- PDF download failures
-- Text extraction issues
-- Language detection problems
+*   **Robust Ingestion**: Strict validation of PDF signatures, size limits, and encryption detection.
+*   **Modular Architecture**: Clean separation of concerns (Processing, Analysis, Models, Caching, Search).
+*   **Advanced Analysis**:
+    *   Language detection (`langdetect`).
+    *   Keyword extraction and readability scoring (`textstat` equivalent logic).
+    *   Stopword removal using NLTK.
+*   **Performance**:
+    *   Asynchronous I/O (`aiohttp`) for downloads.
+    *   Multiprocessing for text extraction (`fitz` / PyMuPDF).
+    *   In-memory caching for repeated requests.
+*   **Scalability**:
+    *   **Batch Processing**: Concurrent processing of multiple PDFs.
+    *   **Search Engine**: TF-IDF based indexing and searching of processed documents.
 
 ## Installation
 
-To install the PDF Text Analyzer, clone this repository and install the dependencies:
+1.  Clone the repository:
+    ```bash
+    git clone https://github.com/cortega26/PDF-Text-Analizer.git
+    cd PDF-Text-Analyzer
+    ```
 
-```sh
-git clone https://github.com/cortega26/PDF-Text-Analizer.git
-cd PDF-Text-Analyzer
-pip install -r requirements.txt
+2.  Install dependencies:
+    ```bash
+    pip install -r requirements.txt
+    ```
+
+    For development and testing:
+    ```bash
+    pip install -r requirements-dev.txt
+    ```
+
+## Usage
+
+### Basic Usage
+
+```python
+import asyncio
+from pdf_processor import PdfProcessor
+
+async def main():
+    processor = PdfProcessor()
+    url = "https://example.com/document.pdf"
+    
+    # Process a single PDF
+    results = await processor.process_url(url, "search phrase")
+    
+    print(f"Status: {results['metadata']['extraction_status']}")
+    print(f"Language: {results['analysis']['language']}")
+    print(f"Word Count: {results['analysis']['word_count']}")
+
+if __name__ == "__main__":
+    asyncio.run(main())
 ```
 
-## Contributing
+### Batch Processing
 
-If you want to contribute to this project, please follow these steps:
+```python
+from batch import PdfBatch
 
-1. Fork the repository.
-2. Create a new branch (git checkout -b feature/your-feature).
-3. Commit your changes (git commit -am 'Add new feature').
-4. Push to the branch (git push origin feature/your-feature).
-5. Submit a pull request.
+async def process_batch():
+    processor = PdfProcessor()
+    batch_processor = PdfBatch(processor)
+    
+    urls = [
+        "https://example.com/doc1.pdf",
+        "https://example.com/doc2.pdf"
+    ]
+    
+    results = await batch_processor.process_urls(urls, "keyword")
+    print(f"Processed {results['summary']['total_processed']} files.")
+```
 
-For any bugs or feature requests, please open an issue.
+### Search Engine
+
+```python
+from search import PdfSearchEngine
+
+# Add processed results to the index
+engine = PdfSearchEngine()
+engine.add_document(url="...", analysis_result=..., metadata=...)
+
+# Search
+matches = engine.search("important concept")
+for match in matches:
+    print(f"Found in {match['url']} (Score: {match['relevance_score']})")
+```
+
+## Architecture
+
+The project has been refactored into single-responsibility modules:
+
+*   `pdf_processor.py`: Main facade/coordinator.
+*   `models.py`: Data classes (`PdfMetadata`, `ProcessingStatistics`, `ExtractionStatus`).
+*   `validators.py`: Security and file validation logic.
+*   `text_analysis.py`: NLP and content analysis logic.
+*   `cache.py`: Caching protocols and implementations.
+*   `search.py`: Vector-based search engine functionality.
+*   `batch.py`: Orchestration for multiple files.
+*   `config.py`: Centralized configuration.
+*   `exceptions.py`: Custom error hierarchy.
+
+## Robustness & Error Handling
+
+The system now distinguishes between different failure modes:
+*   **Encrypted PDFs**: Raises `EncryptedPdfError` immediately.
+*   **Invalid Files**: Rejects non-PDFs (even with `.pdf` extension) via `InvalidFileError`.
+*   **Scanned/Empty**: Returns `ExtractionStatus.SCANNED_OCR_REQUIRED` rather than failing silenty.
+*   **Size Limits**: Enforced via `MAX_PDF_SIZE` in `config.py`.
+
+## Testing
+
+A full regression suite is available using `pytest`.
+
+```bash
+# Run all tests
+python -m pytest
+
+# Run with coverage report
+python -m pytest --cov=.
+```
 
 ## License
 
