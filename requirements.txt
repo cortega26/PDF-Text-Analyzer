@@ -2,5 +2,8 @@ requests>=2.32.2
 PyMuPDF
 nltk
 langdetect
-urllib3>=2.2.2  # pinned by Snyk to avoid a vulnerability
-zipp>=3.19.1    # pinned by Snyk to avoid a vulnerability
+urllib3>=2.2.2
+zipp>=3.19.1
+scikit-learn
+aiohttp
+numpy
