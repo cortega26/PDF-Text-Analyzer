@@ -2,6 +2,13 @@ import dataclasses
 import time
 from dataclasses import dataclass, field
 from typing import Dict, Any, Optional
+from enum import Enum
+
+class ExtractionStatus(Enum):
+    SUCCESS = "success"
+    FAILED = "failed"
+    SCANNED = "scanned_ocr_required"
+    ENCRYPTED = "encrypted"
 
 @dataclass
 class ProcessingStatistics:
@@ -29,7 +36,11 @@ class PdfMetadata:
     page_count: int = 0
     encrypted: bool = False
     permissions: Dict[str, bool] = field(default_factory=dict)
+    extraction_status: ExtractionStatus = ExtractionStatus.SUCCESS
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert metadata to dictionary format."""
-        return dataclasses.asdict(self)
+        data = dataclasses.asdict(self)
+        # Convert Enum to string for serialization
+        data['extraction_status'] = self.extraction_status.value
+        return data

@@ -2,7 +2,7 @@
 Enhanced PDF Processing System
 A comprehensive solution for PDF analysis, text extraction, and content processing
 with advanced features including caching, async operations, and content analysis.
-Version: 2.1.1
+Version: 2.2.0
 """
 
 import asyncio
@@ -23,18 +23,22 @@ import fitz
 import nltk
 from langdetect import detect
 
-# Import from new modules
+# Import from modules
 from config import (
     MAX_PDF_SIZE, DOWNLOAD_TIMEOUT, MAX_RETRIES, 
     BACKOFF_FACTOR, ALLOWED_CONTENT_TYPES
 )
-from exceptions import ProcessingError
-from models import PdfMetadata, ProcessingStatistics
+from exceptions import (
+    ProcessingError, InvalidFileError, EncryptedPdfError, 
+    FileTooLargeError
+)
+from models import PdfMetadata, ProcessingStatistics, ExtractionStatus
 from utils import setup_logging
 from cache import Cache, SimpleMemoryCache
 from text_analysis import ContentAnalyzer
 from batch import PdfBatch
 from search import PdfSearchEngine
+from validators import validate_pdf_signature, validate_file_size
 
 # Configure logging
 logger = setup_logging()
@@ -42,8 +46,7 @@ logger = setup_logging()
 class PdfProcessor:
     """Enhanced PDF processor with advanced features."""
     
-    # Keep constants for backward compatibility if accessed via class, 
-    # but strictly they should be in config.
+    # Keep constants for backward compatibility
     MAX_PDF_SIZE = MAX_PDF_SIZE
     DOWNLOAD_TIMEOUT = DOWNLOAD_TIMEOUT
     MAX_RETRIES = MAX_RETRIES
@@ -128,12 +131,24 @@ class PdfProcessor:
                 logger.info("Returning cached result")
                 return cached_result
             
-            # Download and process
+            # Download and validate
             content = await self._download_pdf(url)
+            
+            # Processing Phase
             text, metadata = await self._process_pdf(content)
             
-            # Analyze content
-            analysis_results = await self._analyze_content(text, word_or_phrase)
+            # If failed or scanned, skip analysis but return metadata
+            if metadata.extraction_status != ExtractionStatus.SUCCESS:
+                logger.warning(f"Analysis skipped due to status: {metadata.extraction_status.value}")
+                analysis_results = {
+                    'language': 'unknown',
+                    'word_count': 0,
+                    'keywords': [],
+                    'text_preview': '[Analysis skipped: No extractable text found]'
+                }
+            else:
+                # Analyze content
+                analysis_results = await self._analyze_content(text, word_or_phrase)
             
             # Update statistics
             self.stats.end_time = time.time()
@@ -157,79 +172,125 @@ class PdfProcessor:
             
             return results
             
+        except ProcessingError as e:
+            logger.error(f"Processing error: {e}")
+            raise
         except Exception as e:
-            logger.error(f"Processing failed: {e}")
+            logger.error(f"Unexpected error: {e}")
             raise ProcessingError(f"Failed to process PDF: {str(e)}")
     
     async def _download_pdf(self, url: str) -> bytes:
-        """Download PDF with retry logic and validate content type."""
+        """Download PDF with strict validation."""
         async with aiohttp.ClientSession() as session:
             for attempt in range(MAX_RETRIES):
                 try:
+                    # Enforce strict size check if Content-Length is available
                     async with session.get(url, timeout=DOWNLOAD_TIMEOUT) as response:
                         response.raise_for_status()
-                        # Validate content type
+                        
+                        content_length = response.headers.get("Content-Length")
+                        if content_length and int(content_length) > MAX_PDF_SIZE:
+                            raise FileTooLargeError(f"File size exceeds limit ({content_length} bytes)")
+                        
+                        # Validate content type (advisory check)
                         content_type = response.headers.get("Content-Type", "").split(";")[0]
                         if content_type not in ALLOWED_CONTENT_TYPES:
-                            raise ProcessingError(f"Invalid content type: {content_type}")
-                        
+                             logger.warning(f"Advisory: Unexpected content type {content_type}")
+
                         content = await response.read()
                         
-                        if len(content) > MAX_PDF_SIZE:
-                            raise ProcessingError("PDF file too large")
+                        if not validate_file_size(content):
+                            raise FileTooLargeError("File size exceeds limit after download")
+                            
+                        if not validate_pdf_signature(content):
+                            raise InvalidFileError("File does not have a valid PDF signature (%PDF-)")
                         
                         return content
                         
+                except ProcessingError:
+                    raise  # Re-raise known errors immediately
                 except Exception as e:
                     if attempt == MAX_RETRIES - 1:
                         raise ProcessingError(f"Failed to download PDF: {str(e)}")
                     await asyncio.sleep(BACKOFF_FACTOR ** attempt)
     
     async def _process_pdf(self, content: bytes) -> tuple[str, PdfMetadata]:
-        """Process PDF content."""
+        """Process PDF content with encryption and text checks."""
         def process_in_thread() -> tuple[str, PdfMetadata]:
-            with fitz.open(stream=content, filetype="pdf") as doc:
-                # Extract metadata
-                raw_metadata = doc.metadata
-                metadata = PdfMetadata(
-                    title=raw_metadata.get('title'),
-                    author=raw_metadata.get('author'),
-                    subject=raw_metadata.get('subject'),
-                    keywords=raw_metadata.get('keywords'),
-                    creator=raw_metadata.get('creator'),
-                    producer=raw_metadata.get('producer'),
-                    creation_date=raw_metadata.get('creationDate'),
-                    modification_date=raw_metadata.get('modDate'),
-                    file_size=len(content),
-                    page_count=len(doc),
-                    encrypted=doc.is_encrypted,
-                    permissions={
-                        'print': bool(doc.permissions & fitz.PDF_PERM_PRINT),
-                        'modify': bool(doc.permissions & fitz.PDF_PERM_MODIFY),
-                        'copy': bool(doc.permissions & fitz.PDF_PERM_COPY),
-                        'annotate': bool(doc.permissions & fitz.PDF_PERM_ANNOTATE)
+            try:
+                with fitz.open(stream=content, filetype="pdf") as doc:
+                    # 1. Encryption Check (Fail Fast)
+                    if doc.is_encrypted:
+                        # Attempt to authenticate with empty password (some "encrypted" pdfs open fine)
+                        # If failed, fitz usually raises specific errors or is_encrypted remains true without access
+                        # We explicitly assume if it's encrypted and we can't get text, it's locked.
+                        pass # fitz handles some transparent encryption. We check strictly below.
+
+                    # Extract metadata
+                    raw_metadata = doc.metadata
+                    metadata_dict = {
+                        'title': raw_metadata.get('title'),
+                        'author': raw_metadata.get('author'),
+                        'subject': raw_metadata.get('subject'),
+                        'keywords': raw_metadata.get('keywords'),
+                        'creator': raw_metadata.get('creator'),
+                        'producer': raw_metadata.get('producer'),
+                        'creation_date': raw_metadata.get('creationDate'),
+                        'modification_date': raw_metadata.get('modDate'),
+                        'file_size': len(content),
+                        'page_count': len(doc),
+                        'encrypted': doc.is_encrypted,
+                        'permissions': {
+                            'print': bool(doc.permissions & fitz.PDF_PERM_PRINT),
+                            'modify': bool(doc.permissions & fitz.PDF_PERM_MODIFY),
+                            'copy': bool(doc.permissions & fitz.PDF_PERM_COPY),
+                            'annotate': bool(doc.permissions & fitz.PDF_PERM_ANNOTATE)
+                        }
                     }
-                )
-                
-                # Extract text concurrently using ThreadPoolExecutor
-                self.stats.total_pages = len(doc)
-                texts = []
-                
-                with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-                    futures = [
-                        executor.submit(doc[page_num].get_text)
-                        for page_num in range(len(doc))
-                    ]
                     
-                    for future in futures:
-                        try:
-                            text = future.result()
-                            texts.append(text)
-                            self.stats.processed_pages += 1
-                        except Exception as e:
-                            logger.error(f"Error extracting text from page: {e}")
-                
-                return ''.join(texts), metadata
+                    # 2. Strict Encryption Stop
+                    # If we can't access pages, it is effectively encrypted for us.
+                    try:
+                        _ = doc.page_count
+                    except Exception:
+                         raise EncryptedPdfError("PDF is encrypted and cannot be read.")
+
+                    # Extract text
+                    self.stats.total_pages = len(doc)
+                    texts = []
+                    
+                    # Use ThreadPool only if we passed the encryption check
+                    # Note: We need to be careful with PyMuPDF objects across threads.
+                    # Text extraction is CPU bound, best done in this process or carefully managed.
+                    # For safety in this thread-based executor (from _process_pdf wrapper), 
+                    # we do simple iteration here to avoid complexity of nested executors or pickling errors.
+                    
+                    for page in doc:
+                        text = page.get_text()
+                        texts.append(text)
+                        self.stats.processed_pages += 1
+                        
+                    full_text = ''.join(texts)
+                    
+                    # 3. Determine Status
+                    status = ExtractionStatus.SUCCESS
+                    if doc.is_encrypted and not full_text.strip():
+                         status = ExtractionStatus.ENCRYPTED # Should likely have been caught above
+                    elif not full_text.strip():
+                        status = ExtractionStatus.SCANNED
+                    
+                    metadata = PdfMetadata(
+                        **metadata_dict,
+                        extraction_status=status
+                    )
+                    
+                    return full_text, metadata
+                    
+            except Exception as e:
+                # Catch specific fitz errors if they map to our domain
+                if "password" in str(e).lower():
+                    raise EncryptedPdfError("PDF requires password")
+                raise ProcessingError(f"PDF parsing failed: {e}")
         
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, process_in_thread)
@@ -237,6 +298,14 @@ class PdfProcessor:
     async def _analyze_content(self, text: str, word_or_phrase: str) -> Dict[str, Any]:
         """Perform content analysis with improved search term counting and output formatting."""
         try:
+            # Short-circuit if empty
+            if not text.strip():
+                return {
+                    'language': 'unknown',
+                    'word_count': 0, 
+                    'text_preview': '[No content to analyze]'
+                }
+                
             # Detect language using a snippet of text for efficiency
             language = detect(text[:10000]) if text.strip() else "unknown"
             
@@ -338,24 +407,30 @@ def print_pdf_summary(results: Dict[str, Any]) -> None:
     metadata = results.get("metadata", {})
     analysis = results.get("analysis", {})
     statistics = results.get("statistics", {})
+    
     print("\\n--- PDF Metadata ---")
+    print(f"Status: {metadata.get('extraction_status', 'N/A').upper()}")
     for key, value in metadata.items():
-        print(f"{key.title()}: {value}")
-    print("\\n--- PDF Analysis ---")
-    print(f"Language: {analysis.get('language', 'N/A')}")
-    print(f"Word Count: {analysis.get('word_count', 'N/A')}")
-    print(f"Character Count: {analysis.get('character_count', 'N/A')}")
-    print(f"Sentence Count: {analysis.get('sentence_count', 'N/A')}")
-    print(f"Search Term Count: {analysis.get('search_term_count', 'N/A')}")
-    print(f"Readability Score: {analysis.get('readability_score', 'N/A')}")
-    print("Keywords:")
-    for kw, score in analysis.get("keywords", []):
-        print(f"  {kw}: {score:.2f}")
-    print("Top Words:")
-    for word, count in analysis.get("top_words", {}).items():
-        print(f"  {word}: {count}")
-    print("\\nText Preview:")
-    print(analysis.get("text_preview", ""))
+        if key != 'extraction_status':
+            print(f"{key.title()}: {value}")
+            
+    if metadata.get('extraction_status') == 'success':
+        print("\\n--- PDF Analysis ---")
+        print(f"Language: {analysis.get('language', 'N/A')}")
+        print(f"Word Count: {analysis.get('word_count', 'N/A')}")
+        print(f"Character Count: {analysis.get('character_count', 'N/A')}")
+        print(f"Sentence Count: {analysis.get('sentence_count', 'N/A')}")
+        print(f"Search Term Count: {analysis.get('search_term_count', 'N/A')}")
+        print(f"Readability Score: {analysis.get('readability_score', 'N/A')}")
+        print("Keywords:")
+        for kw, score in analysis.get("keywords", []):
+            print(f"  {kw}: {score:.2f}")
+        print("Top Words:")
+        for word, count in analysis.get("top_words", {}).items():
+            print(f"  {word}: {count}")
+        print("\\nText Preview:")
+        print(analysis.get("text_preview", ""))
+    
     print("\\n--- Processing Statistics ---")
     for key, value in statistics.items():
         print(f"{key.replace('_',' ').title()}: {value}")
@@ -377,7 +452,7 @@ def print_search_results(search_results: List[Dict[str, Any]]) -> None:
         metadata = result.get("metadata", {})
         print("\\n----------------------------------------")
         print(f"Title: {metadata.get('title', 'N/A')}")
-        print(f"Author: {metadata.get('author', 'N/A')}")
+        print(f"Status: {metadata.get('extraction_status', 'N/A')}")
         print(f"URL: {result.get('url', 'N/A')}")
         print(f"Relevance Score: {result.get('relevance_score', 'N/A')}")
         print(f"Snippet: {result.get('snippet', '')}")
@@ -389,6 +464,8 @@ def setup_nltk_data() -> None:
     for package in required_packages:
         try:
             nltk.download(package, quiet=True)
+            if package == 'punkt':
+                nltk.download('punkt_tab', quiet=True)
         except Exception as e:
             logger.error(f"Failed to download NLTK package {package}: {e}")
 
@@ -429,6 +506,8 @@ async def main():
         search_results = search_engine.search(search_term)
         print_search_results(search_results)
         
+    except ProcessingError as e:
+        print(f"Known Processing Error: {e}")
     except Exception as e:
         print(f"Error: {e}")
         logger.error(f"Processing failed: {e}")
