@@ -38,6 +38,7 @@ from cache import Cache, SimpleMemoryCache
 from text_analysis import ContentAnalyzer
 from batch import PdfBatch
 from search import PdfSearchEngine
+from pdf_ops import process_pdf_content, analyze_text_content
 from validators import validate_pdf_signature, validate_file_size
 
 # Configure logging
@@ -77,20 +78,32 @@ class PdfProcessor:
         self.stats = ProcessingStatistics()
         self._correlation_id = '-'
         
+        # Cache for ContentAnalyzer instances (reused across calls)
+        self.analyzers: Dict[str, ContentAnalyzer] = {}
+        
         # Initialize NLTK data at startup
         self._ensure_nltk_data()
     
     def _ensure_nltk_data(self) -> None:
         """Ensure all required NLTK data is downloaded."""
         try:
+            # Check for data presence 
             nltk.data.find('tokenizers/punkt')
             nltk.data.find('tokenizers/punkt_tab')
             nltk.data.find('corpora/stopwords')
         except LookupError:
             logger.info("Downloading required NLTK data...")
-            nltk.download('punkt', quiet=True)
-            nltk.download('punkt_tab', quiet=True)
-            nltk.download('stopwords', quiet=True)
+            try:
+                nltk.download('punkt', quiet=True)
+                nltk.download('punkt_tab', quiet=True)
+                nltk.download('stopwords', quiet=True)
+                
+                # Verify download success
+                nltk.data.find('tokenizers/punkt')
+                nltk.data.find('corpora/stopwords')
+            except Exception as e:
+                logger.error(f"Failed to download NLTK data: {e}")
+                raise ProcessingError(f"Critical NLTK data missing and download failed: {e}")
     
     def _get_nltk_stopwords(self, language: str) -> set:
         """
@@ -217,84 +230,18 @@ class PdfProcessor:
     
     async def _process_pdf(self, content: bytes) -> tuple[str, PdfMetadata]:
         """Process PDF content with encryption and text checks."""
-        def process_in_thread() -> tuple[str, PdfMetadata]:
-            try:
-                with fitz.open(stream=content, filetype="pdf") as doc:
-                    # 1. Encryption Check (Fail Fast)
-                    if doc.is_encrypted:
-                        # Attempt to authenticate with empty password (some "encrypted" pdfs open fine)
-                        # If failed, fitz usually raises specific errors or is_encrypted remains true without access
-                        # We explicitly assume if it's encrypted and we can't get text, it's locked.
-                        pass # fitz handles some transparent encryption. We check strictly below.
-
-                    # Extract metadata
-                    raw_metadata = doc.metadata
-                    metadata_dict = {
-                        'title': raw_metadata.get('title'),
-                        'author': raw_metadata.get('author'),
-                        'subject': raw_metadata.get('subject'),
-                        'keywords': raw_metadata.get('keywords'),
-                        'creator': raw_metadata.get('creator'),
-                        'producer': raw_metadata.get('producer'),
-                        'creation_date': raw_metadata.get('creationDate'),
-                        'modification_date': raw_metadata.get('modDate'),
-                        'file_size': len(content),
-                        'page_count': len(doc),
-                        'encrypted': doc.is_encrypted,
-                        'permissions': {
-                            'print': bool(doc.permissions & fitz.PDF_PERM_PRINT),
-                            'modify': bool(doc.permissions & fitz.PDF_PERM_MODIFY),
-                            'copy': bool(doc.permissions & fitz.PDF_PERM_COPY),
-                            'annotate': bool(doc.permissions & fitz.PDF_PERM_ANNOTATE)
-                        }
-                    }
-                    
-                    # 2. Strict Encryption Stop
-                    # If we can't access pages, it is effectively encrypted for us.
-                    try:
-                        _ = doc.page_count
-                    except Exception:
-                         raise EncryptedPdfError("PDF is encrypted and cannot be read.")
-
-                    # Extract text
-                    self.stats.total_pages = len(doc)
-                    texts = []
-                    
-                    # Use ThreadPool only if we passed the encryption check
-                    # Note: We need to be careful with PyMuPDF objects across threads.
-                    # Text extraction is CPU bound, best done in this process or carefully managed.
-                    # For safety in this thread-based executor (from _process_pdf wrapper), 
-                    # we do simple iteration here to avoid complexity of nested executors or pickling errors.
-                    
-                    for page in doc:
-                        text = page.get_text()
-                        texts.append(text)
-                        self.stats.processed_pages += 1
-                        
-                    full_text = ''.join(texts)
-                    
-                    # 3. Determine Status
-                    status = ExtractionStatus.SUCCESS
-                    if doc.is_encrypted and not full_text.strip():
-                         status = ExtractionStatus.ENCRYPTED # Should likely have been caught above
-                    elif not full_text.strip():
-                        status = ExtractionStatus.SCANNED
-                    
-                    metadata = PdfMetadata(
-                        **metadata_dict,
-                        extraction_status=status
-                    )
-                    
-                    return full_text, metadata
-                    
-            except Exception as e:
-                # Catch specific fitz errors if they map to our domain
-                if "password" in str(e).lower():
-                    raise EncryptedPdfError("PDF requires password")
-                raise ProcessingError(f"PDF parsing failed: {e}")
-        
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, process_in_thread)
+        try:
+             # Run the pure function in executor
+            full_text, metadata = await loop.run_in_executor(None, process_pdf_content, content)
+            
+            # Update stats based on results
+            self.stats.total_pages = metadata.page_count
+            self.stats.processed_pages += metadata.page_count # Assuming all pages processed if success
+            
+            return full_text, metadata
+        except Exception as e:
+            raise ProcessingError(f"PDF parsing failed: {e}")
     
     async def _analyze_content(self, text: str, word_or_phrase: str) -> Dict[str, Any]:
         """Perform content analysis with improved search term counting and output formatting."""
@@ -307,60 +254,32 @@ class PdfProcessor:
                     'text_preview': '[No content to analyze]'
                 }
                 
-            # Detect language using a snippet of text for efficiency
+            # Detect language using a snippet
             language = detect(text[:10000]) if text.strip() else "unknown"
             
-            # Initialize analyzer
-            analyzer = ContentAnalyzer(language)
+            # Get or create analyzer (Singleton/Cache pattern)
+            if language not in self.analyzers:
+                logger.info(f"Initializing ContentAnalyzer for language: {language}")
+                self.analyzers[language] = ContentAnalyzer(language)
             
+            analyzer = self.analyzers[language]
+            
+            # Get stopwords for this language (helper method)
+            stopwords = self._get_nltk_stopwords(language)
+            
+            # Perform analysis in executor
             loop = asyncio.get_event_loop()
             
-            def analyze_in_thread():
-                try:
-                    words = nltk.word_tokenize(text.lower())
-                    
-                    # Use the helper to get the proper stopwords
-                    stop_words = self._get_nltk_stopwords(language)
-                    
-                    # Count exact occurrences of the search term
-                    search_term_count = len(re.findall(
-                        rf'\\b{re.escape(word_or_phrase.lower())}\\b', 
-                        text.lower()
-                    ))
-                    
-                    # Extract keywords and find matching ones
-                    keywords = analyzer.extract_keywords(text)
-                    matching_keywords = [
-                        (kw, score) for kw, score in keywords
-                        if word_or_phrase.lower() in kw.lower()
-                    ]
-                    
-                    # Filter out non-alphabetic tokens and stopwords for top words
-                    top_words = dict(Counter(
-                        word for word in words
-                        if word.isalpha() and word not in stop_words
-                    ).most_common(10))
-                    
-                    # Create a preview of the text (first 500 characters)
-                    text_preview = text[:500] + "..." if len(text) > 500 else text
-                    
-                    return {
-                        'language': language,
-                        'word_count': len(words),
-                        'character_count': len(text),
-                        'sentence_count': len(nltk.sent_tokenize(text)),
-                        'search_term_count': search_term_count,
-                        'keywords': keywords,
-                        'matching_keywords': matching_keywords,
-                        'readability_score': analyzer.calculate_readability_score(text),
-                        'text_preview': text_preview,
-                        'top_words': top_words
-                    }
-                except Exception as e:
-                    logger.error(f"Error in content analysis thread: {e}")
-                    raise
-            
-            return await loop.run_in_executor(None, analyze_in_thread)
+            # Pass all pure data needed for analysis
+            return await loop.run_in_executor(
+                None, 
+                analyze_text_content, 
+                text, 
+                word_or_phrase, 
+                language, 
+                analyzer, 
+                stopwords
+            )
             
         except Exception as e:
             logger.error(f"Content analysis failed: {e}")

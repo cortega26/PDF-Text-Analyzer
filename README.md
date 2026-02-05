@@ -75,6 +75,22 @@ async def process_batch():
     
     results = await batch_processor.process_urls(urls, "keyword")
     print(f"Processed {results['summary']['total_processed']} files.")
+
+### Batch Processing (Streaming)
+For memory-efficient processing of huge batches, use the new `process_stream` API:
+
+```python
+from batch import PdfBatch
+
+async def process_many(processor, urls):
+    batch = PdfBatch(processor)
+    async for url, result, error in batch.process_stream(urls, "search term"):
+        if error:
+            print(f"Failed {url}: {error}")
+        else:
+            print(f"Success {url}: Found {result['analysis']['search_term_count']} matches")
+            # Save result to DB immediately...
+```
 ```
 
 ### Search Engine

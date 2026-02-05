@@ -13,14 +13,45 @@ class PdfBatch:
         self.results: Dict[str, Any] = {}
         self.errors: Dict[str, str] = {}
     
-    async def process_urls(self, urls: List[str], word_or_phrase: str) -> Dict[str, Any]:
-        """Process multiple URLs concurrently."""
+    async def process_stream(self, urls: List[str], word_or_phrase: str):
+        """
+        Process multiple URLs concurrently and yield results as they complete.
+        Returns an AsyncGenerator yielding (url, result, error_message).
+        """
         tasks = []
-        for url in urls:
-            task = asyncio.create_task(self._process_single_url(url, word_or_phrase))
-            tasks.append(task)
+        # Create a mapping from task to URL to track which URL completed
+        task_to_url = {}
         
-        await asyncio.gather(*tasks)
+        for url in urls:
+            # We wrap the internal call to return the URL with the result/error
+            task = asyncio.create_task(self._safe_process(url, word_or_phrase))
+            tasks.append(task)
+            task_to_url[task] = url
+            
+        for completed_task in asyncio.as_completed(tasks):
+            url, result, error = await completed_task
+            
+            if error:
+                self.errors[url] = error
+            else:
+                self.results[url] = result
+                
+            yield url, result, error
+
+    async def _safe_process(self, url: str, word_or_phrase: str):
+        try:
+            result = await self.processor.process_url(url, word_or_phrase)
+            return url, result, None
+        except Exception as e:
+            return url, None, str(e)
+
+    async def process_urls(self, urls: List[str], word_or_phrase: str) -> Dict[str, Any]:
+        """
+        Process multiple URLs concurrently (Legacy Method).
+        WARNING: Accumulates all results in memory.
+        """
+        async for _ in self.process_stream(urls, word_or_phrase):
+            pass # We just consume the stream to populate self.results/self.errors
         
         return {
             'results': self.results,
@@ -28,13 +59,7 @@ class PdfBatch:
             'summary': self._generate_summary()
         }
     
-    async def _process_single_url(self, url: str, word_or_phrase: str) -> None:
-        """Process a single URL."""
-        try:
-            result = await self.processor.process_url(url, word_or_phrase)
-            self.results[url] = result
-        except Exception as e:
-            self.errors[url] = str(e)
+
     
     def _generate_summary(self) -> Dict[str, Any]:
         """Generate processing summary."""
