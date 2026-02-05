@@ -164,7 +164,8 @@ class PdfProcessor:
             results = {
                 "metadata": metadata.to_dict(),
                 "analysis": analysis_results,
-                "statistics": stats_dict
+                "statistics": stats_dict,
+                "full_text": text
             }
             
             # Cache results
@@ -502,7 +503,7 @@ async def main():
         # Search example
         print("\\nPerforming search...")
         search_engine = PdfSearchEngine()
-        search_engine.add_document(processor.url, results['analysis'], results['metadata'])
+        search_engine.add_document(processor.url, results['analysis'], results['metadata'], results.get('full_text'))
         search_results = search_engine.search(search_term)
         print_search_results(search_results)
         

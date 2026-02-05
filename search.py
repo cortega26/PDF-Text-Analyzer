@@ -2,7 +2,7 @@ import hashlib
 import nltk
 from collections import defaultdict
 from typing import Dict, Any, List, Set
-from sklearn.feature_extraction.text import TfidfVectorizer
+from typing import Dict, Any, List, Set
 from utils import setup_logging
 
 logger = setup_logging(__name__)
@@ -13,18 +13,13 @@ class PdfSearchEngine:
     def __init__(self):
         self.index = defaultdict(list)
         self.documents: Dict[str, Dict[str, Any]] = {}
-        self.vectorizer = TfidfVectorizer(
-            stop_words='english',
-            max_features=1000,
-            ngram_range=(1, 2)
-        )
     
-    def add_document(self, url: str, analysis_results: Dict[str, Any], metadata: Dict[str, Any]) -> None:
+    def add_document(self, url: str, analysis_results: Dict[str, Any], metadata: Dict[str, Any], full_text: str = "") -> None:
         """Add a document to the search index using analysis results."""
         doc_id = hashlib.md5(url.encode()).hexdigest()
         
-        # Extract text content from analysis results (using the preview)
-        content = analysis_results.get('text_preview', '')
+        # Use full text if available, otherwise fallback to preview
+        content = full_text if full_text else analysis_results.get('text_preview', '')
         
         self.documents[doc_id] = {
             'url': url,

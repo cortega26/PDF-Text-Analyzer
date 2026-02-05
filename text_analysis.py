@@ -10,8 +10,22 @@ class ContentAnalyzer:
     
     def __init__(self, language: str):
         self.language = language
+        
+        # Map detected language code to NLTK language name
+        self.lang_mapping = {
+            "en": "english", "fr": "french", "de": "german", "es": "spanish",
+            "it": "italian", "pt": "portuguese", "nl": "dutch", "sv": "swedish",
+            "no": "norwegian", "fi": "finnish", "ru": "russian"
+        }
+        nltk_lang = self.lang_mapping.get(language, "english")
+        
+        try:
+            self.stop_words = list(nltk.corpus.stopwords.words(nltk_lang))
+        except LookupError:
+            self.stop_words = 'english'
+            
         self.vectorizer = TfidfVectorizer(
-            stop_words='english', 
+            stop_words=self.stop_words, 
             max_features=1000,
             ngram_range=(1, 2)
         )
