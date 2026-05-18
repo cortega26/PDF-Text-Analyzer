@@ -1,10 +1,11 @@
 import pytest
 import fitz
 import asyncio
-from aioresponses import aioresponses
+from aiointercept import aiointercept
 from unittest.mock import MagicMock
 import sys
 import nltk
+import pytest_asyncio
 
 # Mock NLTK downloads to prevent network access during tests
 # We'll just patch the downloader to do nothing, assuming data is present or we don't strictly need it for unit tests
@@ -41,9 +42,9 @@ def pdf_factory():
         return pdf_bytes
     return _create_pdf
 
-@pytest.fixture
-def mock_aioresponse():
-    with aioresponses() as m:
+@pytest_asyncio.fixture
+async def mock_aioresponse():
+    async with aiointercept(True) as m:
         yield m
 
 @pytest.fixture(scope="session")
