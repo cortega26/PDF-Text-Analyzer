@@ -2,7 +2,7 @@
 
 *Part of the [Tooltician ecosystem](https://tooltician.com) — robust PDF text extraction, analysis and search.*
 
-[![Part of Tooltician](https://tooltician.com/badge.en.svg)](https://tooltician.com)
+[![Part of Tooltician](https://img.shields.io/badge/Part_of-Tooltician.com-6C47FF?v=2)](https://tooltician.com)
 
 A robust, modular, and high-performance Python system for downloading, extracting, analyzing, and searching text from PDF documents.
 
