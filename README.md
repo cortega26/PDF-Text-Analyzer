@@ -1,10 +1,48 @@
+<div align="center">
+
 # PDF Text Analyzer
 
-*Part of the [Tooltician ecosystem](https://tooltician.com) — robust PDF text extraction, analysis and search.*
+<p><strong>Turn PDFs into searchable, analyzable text without pretending every PDF is clean.</strong></p>
+<p>Validation, extraction, language detection, batch processing and TF-IDF search in one modular Python pipeline.</p>
 
+[![GitHub stars](https://img.shields.io/github/stars/cortega26/PDF-Text-Analyzer?style=flat&logo=github)](https://github.com/cortega26/PDF-Text-Analyzer/stargazers)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Part of Tooltician](https://img.shields.io/badge/Part_of-Tooltician.com-6C47FF?v=2)](https://tooltician.com)
 
-A robust, modular, and high-performance Python system for downloading, extracting, analyzing, and searching text from PDF documents.
+</div>
+
+```python
+import asyncio
+from pdf_processor import PdfProcessor
+
+async def main():
+    result = await PdfProcessor().process_url(
+        "https://example.com/document.pdf",
+        "search phrase",
+    )
+    print(result["analysis"]["language"])
+    print(result["analysis"]["search_term_count"])
+
+asyncio.run(main())
+```
+
+## PDFs fail in more ways than “text found / text not found”
+
+A production PDF pipeline needs to distinguish invalid files, encrypted documents, scanned PDFs that require OCR, oversized inputs, network failures and normal extraction — **before** downstream analysis quietly produces garbage.
+
+PDF Text Analyzer is built around that reality:
+
+| Problem | Built-in answer |
+|:---|:---|
+| Fake or malformed PDFs | Signature and file validation |
+| Encrypted documents | Explicit `EncryptedPdfError` |
+| Scanned / empty PDFs | `SCANNED_OCR_REQUIRED` status |
+| Large batches | Async downloads + multiprocessing extraction |
+| Repeated analysis | Cache layer |
+| Finding concepts across documents | TF-IDF indexing and search |
+| Mixed-language corpora | Language detection + text analysis |
+
+> **Good fit:** ingestion pipelines, document research, compliance workflows, batch analysis, search prototypes and backend services where failure modes must stay visible.
 
 ## Key Features
 
@@ -26,7 +64,7 @@ A robust, modular, and high-performance Python system for downloading, extractin
 
 1.  Clone the repository:
     ```bash
-    git clone https://github.com/cortega26/PDF-Text-Analizer.git
+    git clone https://github.com/cortega26/PDF-Text-Analyzer.git
     cd PDF-Text-Analyzer
     ```
 
