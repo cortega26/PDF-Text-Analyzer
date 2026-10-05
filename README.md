@@ -105,6 +105,7 @@ if __name__ == "__main__":
 
 ```python
 from batch import PdfBatch
+from pdf_processor import PdfProcessor
 
 async def process_batch():
     processor = PdfProcessor()
@@ -117,6 +118,7 @@ async def process_batch():
     
     results = await batch_processor.process_urls(urls, "keyword")
     print(f"Processed {results['summary']['total_processed']} files.")
+```
 
 ### Batch Processing (Streaming)
 For memory-efficient processing of huge batches, use the new `process_stream` API:
@@ -132,7 +134,6 @@ async def process_many(processor, urls):
         else:
             print(f"Success {url}: Found {result['analysis']['search_term_count']} matches")
             # Save result to DB immediately...
-```
 ```
 
 ### Search Engine
